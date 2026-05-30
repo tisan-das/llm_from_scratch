@@ -476,7 +476,26 @@ torch.save(checkpoint, f'checkpoints/ckpt_epoch_{epoch:03d}.pt')
 **Save strategy:**
 - Save every N steps (configurable, default: every epoch)
 - Always save best model (by validation loss): `checkpoints/best.pt`
-- On resume: `python train.py --resume checkpoints/ckpt_epoch_005.pt` or auto-detect latest
+
+**Checkpoint loading (explicit only):**
+- Checkpoints are loaded **only** when an explicit CLI argument is provided. There is no auto-detection or auto-resume.
+- Usage: `python train.py --resume checkpoints/ckpt_epoch_005.pt`
+- If `--resume` is provided, the script loads the checkpoint and continues training from that epoch/step. All metrics (train_losses, val_losses, best_val_loss) are restored. The optimizer state (Adam moments) is also restored so momentum is not lost.
+- If `--resume` is **not** provided, it is treated as a fresh start.
+
+**Fresh start cleanup:**
+- On a fresh start (no `--resume`), the entire `checkpoints/` directory is deleted and recreated empty.
+- This guarantees no stale checkpoints from previous runs accumulate and avoids confusion.
+- The `logs/` directory is also cleaned on fresh start (old training CSV is removed).
+
+**CLI summary:**
+```bash
+# Fresh start (wipes checkpoints/ and logs/)
+python train.py
+
+# Resume from a specific checkpoint
+python train.py --resume checkpoints/ckpt_epoch_005.pt
+```
 
 #### Logging
 
