@@ -65,7 +65,26 @@ def save_checkpoint(
     best_val_loss: float,
     path: str | Path,
 ) -> None:
-    """Save model, optimizer, config, and training state to a .pt file."""
+    """
+    Save a complete training checkpoint to a single .pt file.
+
+    The checkpoint dict contains everything needed to fully resume training:
+
+        {
+            'epoch':               int,                          # which epoch
+            'step':                int,                          # global step count
+            'model_state_dict':    model.state_dict(),           # all weights & biases
+            'optimizer_state_dict': optimizer.state_dict(),     # Adam momentum & velocity
+            'config':              dataclasses.asdict(config),   # all hyperparameters
+            'train_losses':        list[float],                  # per-batch history
+            'val_losses':          list[float],                  # per-epoch history
+            'best_val_loss':       float,                        # best val loss so far
+        }
+
+    model_state_dict is needed for both inference and training resume.
+    optimizer_state_dict is needed ONLY for training resume (preserves Adam momentum).
+    config ensures the checkpoint is self-describing — no external config file needed.
+    """
     raise NotImplementedError
 
 
@@ -77,8 +96,15 @@ def load_checkpoint(
     """
     Load a checkpoint and restore model (+ optionally optimizer) state.
 
-    Returns the checkpoint dict with keys: epoch, step, train_losses, val_losses,
-    best_val_loss, config (as dict).
+    Restores into the provided model (in-place via load_state_dict).
+    If optimizer is provided, its state is also restored (for training resume).
+    If optimizer is None, only model weights are restored (for inference).
+
+    Returns the full checkpoint dict for accessing epoch, step, losses, etc.
+
+    Keys in the returned dict:
+        epoch, step, model_state_dict, optimizer_state_dict,
+        config (as plain dict), train_losses, val_losses, best_val_loss
     """
     raise NotImplementedError
 
