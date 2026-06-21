@@ -198,6 +198,28 @@ def test_scaled_dot_product_attention():
           max_weight < 0.99,
           f"max attention weight: {max_weight:.4f} (should be well below 1.0)")
 
+    # A10 — zero Q,K: all scores are 0 -> softmax becomes uniform
+    # Output should equal the mean of V across the key dimension.
+    cfg = default_config()
+    Q_zero = torch.zeros(2, cfg.num_heads, 4, cfg.d_k)
+    K_zero = torch.zeros(2, cfg.num_heads, 4, cfg.d_k)
+    V_nonzero = torch.randn(2, cfg.num_heads, 4, cfg.d_k)
+    out_zero, w_zero = scaled_dot_product_attention(Q_zero, K_zero, V_nonzero)
+    expected = V_nonzero.mean(dim=-2, keepdim=True).expand(-1, -1, 4, -1)
+    check("A10: zero Q,K -> uniform attention -> mean V",
+          torch.allclose(out_zero, expected, atol=1e-5),
+          f"max diff: {(out_zero - expected).abs().max().item():.2e}")
+
+    # A11 — no NaN/inf in output or weights for normal random inputs
+    Q_rand = torch.randn(2, cfg.num_heads, 4, cfg.d_k)
+    K_rand = torch.randn(2, cfg.num_heads, 6, cfg.d_k)
+    V_rand = torch.randn(2, cfg.num_heads, 6, cfg.d_k)
+    out_rand, weights_rand = scaled_dot_product_attention(Q_rand, K_rand, V_rand)
+    check("A11: output has no NaN", not torch.isnan(out_rand).any().item())
+    check("A11: output has no inf", not torch.isinf(out_rand).any().item())
+    check("A11: weights have no NaN", not torch.isnan(weights_rand).any().item())
+    check("A11: weights have no inf", not torch.isinf(weights_rand).any().item())
+
 
 # ---------------------------------------------------------------------------
 # MultiHeadAttention
@@ -250,7 +272,7 @@ def test_multihead_attention():
     out_masked, weights_masked = mha(query=x, key=x, value=x, mask=mask)
     # Masked positions should have ~0 weight
     masked_portion = weights_masked[:, :, :, Sk // 2:]
-    check("M3: mask affects MHA attention (masked ≈ 0)",
+    check("M3: mask affects MHA attention (masked ~= 0)",
           masked_portion.abs().max().item() < 1e-6,
           f"max masked weight: {masked_portion.abs().max().item():.2e}")
 
@@ -467,7 +489,12 @@ def test_edge_cases():
     cfg = default_config()
 
     # E0 — batch size 1, sequence length 1
+    # Set eval mode so dropout doesn't scale the single weight
+    # (softmax of 1 element is always 1.0; dropout's 1/(1-p) scaling
+    # in training mode would make it 1.111 — not an identity violation,
+    # just a training-mode artifact)
     mha = MultiHeadAttention(cfg)
+    mha.eval()
     x_single = torch.randn(1, 1, cfg.d_model)
     out_single, w_single = mha(query=x_single, key=x_single, value=x_single)
     check("E0: B=1, S=1 self-attn output shape",
@@ -486,36 +513,14 @@ def test_edge_cases():
     check("E1: d_k=1 — output shape", out_edge.shape == (2, 3, 4),
           f"got {out_edge.shape}")
 
-    # E2 — Q, K, V with zero values
-    Q_zero = torch.zeros(2, cfg.num_heads, 4, cfg.d_k)
-    K_zero = torch.zeros(2, cfg.num_heads, 4, cfg.d_k)
-    V_nonzero = torch.randn(2, cfg.num_heads, 4, cfg.d_k)
-    out_zero, w_zero = scaled_dot_product_attention(Q_zero, K_zero, V_nonzero)
-    # Softmax of all zeros = uniform -> output = mean of V
-    expected = V_nonzero.mean(dim=-2, keepdim=True).expand(-1, -1, 4, -1)
-    check("E2: zero Q,K -> uniform attention -> mean V",
-          torch.allclose(out_zero, expected, atol=1e-5),
-          f"max diff: {(out_zero - expected).abs().max().item():.2e}")
-
-    # E3 — no NaN in output or weights for normal inputs
-    Q = torch.randn(2, cfg.num_heads, 4, cfg.d_k)
-    K = torch.randn(2, cfg.num_heads, 6, cfg.d_k)
-    V = torch.randn(2, cfg.num_heads, 6, cfg.d_k)
-    out, weights = scaled_dot_product_attention(Q, K, V)
-    check("E3: output has no NaN", not torch.isnan(out).any().item())
-    check("E3: output has no inf", not torch.isinf(out).any().item())
-    check("E3: weights have no NaN", not torch.isnan(weights).any().item())
-    check("E3: weights have no inf", not torch.isinf(weights).any().item())
-
 
 # ---------------------------------------------------------------------------
 # Run all
 # ---------------------------------------------------------------------------
 
 if __name__ == "__main__":
-    # TODO: re-enable once scaled_dot_product_attention is implemented
-    # print("scaled_dot_product_attention")
-    # test_scaled_dot_product_attention()
+    print("scaled_dot_product_attention")
+    test_scaled_dot_product_attention()
 
     # TODO: re-enable once MultiHeadAttention is implemented
     # print("\nMultiHeadAttention")
@@ -527,9 +532,15 @@ if __name__ == "__main__":
     print("\ncreate_causal_mask")
     test_create_causal_mask()
 
-    # TODO: re-enable once attention + MHA are implemented
+    # TODO: re-enable once MultiHeadAttention is implemented (used in edge cases)
     # print("\nEdge Cases")
     # test_edge_cases()
+
+    print("\nEdge Cases")
+    test_edge_cases()
+
+    print("\nMultiHeadAttention")
+    test_multihead_attention()
 
     print(f"\n{_passed} passed, {_failed} failed")
     sys.exit(0 if _failed == 0 else 1)
